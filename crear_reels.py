@@ -1,12 +1,40 @@
-from moviepy.editor import ImageClip, TextClip, CompositeVideoClip, ColorClip, AudioFileClip
-from moviepy.config import change_settings
+from moviepy.editor import ImageClip, CompositeVideoClip, ColorClip, AudioFileClip
 import sys
 import os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Configurar la ruta a ImageMagick
-change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"})
+# Función para dividir texto en varias líneas si excede el ancho máximo
+def split_text_to_lines(text, font, max_width, stroke_width):
+    words = text.split()
+    lines = []
+    current_line = []
+    current_width = 0
+
+    for word in words:
+        # Calcular el ancho de la palabra
+        word_bbox = font.getbbox(word, stroke_width=stroke_width)
+        word_width = word_bbox[2] - word_bbox[0]
+
+        # Calcular el ancho del espacio entre palabras
+        space_bbox = font.getbbox(" ", stroke_width=stroke_width)
+        space_width = space_bbox[2] - space_bbox[0]
+
+        # Verificar si agregar la palabra excede el ancho máximo
+        if current_width + word_width + (space_width if current_line else 0) <= max_width:
+            current_line.append(word)
+            current_width += word_width + (space_width if current_line else 0)
+        else:
+            if current_line:
+                lines.append(" ".join(current_line))
+            current_line = [word]
+            current_width = word_width
+
+    if current_line:
+        lines.append(" ".join(current_line))
+
+    return lines
+
 # Función para cargar imágenes desde una carpeta o argumentos
 def load_images(image_paths):
     images = []
@@ -31,7 +59,7 @@ def load_images(image_paths):
     return images
 
 # Función para crear una imagen de texto con fondo usando Pillow
-def create_text_image_with_background(text, width, height, font_path="Arial", font_size=30, text_color=(255, 255, 255), stroke_color=(0, 0, 0), stroke_width=2, position=("center", 1500)):
+def create_text_image_with_background(text, width, height, font_path="Arial", font_size=50, text_color=(255, 255, 255), stroke_color=(0, 0, 0), stroke_width=2, position=("center", 1500)):
     # Crear una imagen transparente
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -42,10 +70,22 @@ def create_text_image_with_background(text, width, height, font_path="Arial", fo
     except:
         font = ImageFont.load_default()
 
-    # Calcular tamaño del texto
-    text_bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
+    # Ancho máximo permitido (asumiendo márgenes de 100 píxeles a cada lado)
+    max_width = width - 200  # 1080 - 100 - 100 = 880 píxeles
+
+    # Dividir el texto en líneas si excede el ancho máximo
+    lines = split_text_to_lines(text, font, max_width, stroke_width)
+
+    # Calcular el tamaño total del bloque de texto
+    line_heights = []
+    line_widths = []
+    for line in lines:
+        line_bbox = draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width)
+        line_widths.append(line_bbox[2] - line_bbox[0])
+        line_heights.append(line_bbox[3] - line_bbox[1])
+
+    text_width = max(line_widths)
+    text_height = sum(line_heights) + (len(lines) - 1) * 10  # Espacio entre líneas
 
     # Calcular posición del texto
     if position[0] == "center":
@@ -65,15 +105,24 @@ def create_text_image_with_background(text, width, height, font_path="Arial", fo
         fill=(0, 0, 0, 128)  # Negro con 50% de opacidad
     )
 
-    # Dibujar el texto con borde
-    draw.text(
-        (x, y),
-        text,
-        fill=text_color,
-        font=font,
-        stroke_width=stroke_width,
-        stroke_fill=stroke_color
-    )
+    # Dibujar el texto línea por línea
+    current_y = y
+    for line in lines:
+        line_bbox = draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width)
+        line_width = line_bbox[2] - line_bbox[0]
+        if position[0] == "center":
+            line_x = (width - line_width) // 2
+        else:
+            line_x = x
+        draw.text(
+            (line_x, current_y),
+            line,
+            fill=text_color,
+            font=font,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_color
+        )
+        current_y += (line_bbox[3] - line_bbox[1]) + 10  # Espacio entre líneas
 
     return np.array(img)
 
@@ -82,7 +131,7 @@ duration_per_image = 4  # Segundos por imagen
 text_duration = 3.5     # Duración del texto por frase
 video_size = (1080, 1920)  # Formato vertical para Reels
 font = r"C:\Windows\Fonts\arial.ttf"  # Ruta completa a la fuente
-font_size = 50              # Reducido para que quepa dentro del marco
+font_size = 50              # Tamaño de la fuente
 text_color = (255, 255, 255)  # Blanco
 stroke_color = (0, 0, 0)      # Negro
 stroke_width = 2
@@ -200,11 +249,14 @@ if os.path.exists(music_path):
     try:
         audio = AudioFileClip(music_path).subclip(0, final_clip.duration)
         final_clip = final_clip.set_audio(audio)
+        print("Música de fondo agregada correctamente")
     except Exception as e:
         print(f"Error al cargar música: {e}")
+else:
+    print("Archivo de música no encontrado. El video se generará sin música.")
 
 # Exportar video
-output_path = "corewave_reel.mp4"
+output_path = "sancayetano_reel.mp4"
 try:
     final_clip.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
 except Exception as e:
